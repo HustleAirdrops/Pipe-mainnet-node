@@ -3,6 +3,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #     PIPE NETWORK NODE INSTALLER (ENGLISH) - ENHANCED EDITION
 #     Fully localized, visually rich, and user-friendly
+#     Modified to use Docker with debian:testing for compatibility
 # ═══════════════════════════════════════════════════════════════════════════════
 
 tput reset
@@ -117,7 +118,7 @@ menu_header() {
     local node_status="OFFLINE"
 
     if [ "$service_status" = "active" ]; then
-        if pgrep -x pop >/dev/null 2>&1; then
+        if docker ps | grep -q debian:testing; then
             node_status="ACTIVE"
         else
             node_status="NOT RUNNING"
@@ -126,7 +127,7 @@ menu_header() {
 
     clear
     show_gray  "═══════════════════════════════════════════════════════════════════════"
-    show_cyan  "     PIPE NETWORK NODE - MAINNET v1.0.0"
+    show_cyan  "     PIPE NETWORK NODE - MAINNET v1.0.0 (Docker Edition)"
     show_gray  "═══════════════════════════════════════════════════════════════════════"
     echo
     show_orange "Agent: $(whoami)     $(date +"%H:%M:%S")     $(date +"%Y-%m-%d")"
@@ -225,6 +226,7 @@ show_requirements() {
     show_white "   Storage: 20 GB SSD (NVMe preferred)"
     show_white "   Network: 100 Mbps+ stable connection"
     show_white "   Ports: 80 & 443 (must be OPEN)"
+    show_white "   Docker: Required for compatibility"
     echo
     show_pink "   Solana Wallet: 44-character address required"
     echo
@@ -243,7 +245,7 @@ install_packages() {
     PACKAGES=(
         curl git jq lz4 build-essential unzip make gcc ncdu cmake clang
         pkg-config libssl-dev libzmq3-dev libczmq-dev python3-pip protobuf-compiler
-        dos2unix screen
+        dos2unix screen docker.io
     )
 
     for pkg in "${PACKAGES[@]}"; do
@@ -255,6 +257,9 @@ install_packages() {
         fi
         sleep 0.3
     done
+
+    # Enable and start Docker
+    run_commands "sudo systemctl enable --now docker" "Enabling Docker"
 }
 
 download_pipe_binary() {
@@ -319,13 +324,14 @@ create_systemd_service() {
 
     sudo tee /etc/systemd/system/pipe.service > /dev/null <<EOF
 [Unit]
-Description=Pipe Network POP Node
-After=network-online.target
+Description=Pipe Network POP Node (Docker)
+After=network-online.target docker.service
 Wants=network-online.target
+Requires=docker.service
 
 [Service]
 WorkingDirectory=/opt/pipe
-ExecStart=/bin/bash -c 'source /opt/pipe/.env && /opt/pipe/pop'
+ExecStart=/usr/bin/docker run --network host -v /opt/pipe:/app -w /app debian:testing bash -c 'apt update && apt install -y curl iputils-ping dnsutils && echo "nameserver 8.8.8.8" > /etc/resolv.conf && source /app/.env && /app/pop'
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -384,8 +390,20 @@ view_logs() {
     fi
 }
 
-show_node_status() { cd /opt/pipe && ./pop status; }
-show_earnings()   { cd /opt/pipe && ./pop earnings; }
+show_node_status() { 
+    if [ -d /opt/pipe ]; then
+        docker run --rm --network host -v /opt/pipe:/app -w /app debian:testing /app/pop status
+    else
+        show_red "Node not installed."
+    fi
+}
+show_earnings()   { 
+    if [ -d /opt/pipe ]; then
+        docker run --rm --network host -v /opt/pipe:/app -w /app debian:testing /app/pop earnings
+    else
+        show_red "Node not installed."
+    fi
+}
 
 health_check() {
     if is_node_running; then
@@ -426,9 +444,9 @@ show_help_commands() {
     show_cyan "   sudo systemctl start/stop/restart pipe"
     show_cyan "   sudo journalctl -u pipe -f      # Live logs"
 
-    show_white "Pipe Commands:"
-    show_cyan "   cd /opt/pipe && ./pop status"
-    show_cyan "   cd /opt/pipe && ./pop earnings"
+    show_white "Pipe Commands (via Docker):"
+    show_cyan "   docker run --rm --network host -v /opt/pipe:/app -w /app debian:testing /app/pop status"
+    show_cyan "   docker run --rm --network host -v /opt/pipe:/app -w /app debian:testing /app/pop earnings"
     show_cyan "   curl http://localhost:8081/health"
 
     show_white "Files:"
