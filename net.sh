@@ -12,7 +12,7 @@ echo_red(){ echo -e "${RED}$1${NC}"; }
 CONTAINER_NAME="pipe-node-systemd"
 WORK_DIR="$(pwd)/pipe_docker_systemd"
 
-# -------------------- SETUP HOST --------------------
+# -------------------- SETUP HOST -------------------- ssss
 echo_green "📁 Setting up working directory: $WORK_DIR"
 mkdir -p "$WORK_DIR"
 
