@@ -1,63 +1,85 @@
 #!/bin/bash
 set -e
 
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-echo_green(){ echo -e "${GREEN}$1${NC}"; }; echo_yellow(){ echo -e "${YELLOW}$1${NC}"; }; echo_red(){ echo -e "${RED}$1${NC}"; }
+# -------------------- COLORS --------------------
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+echo_green() { echo -e "${GREEN}$1${NC}"; }
+echo_yellow() { echo -e "${YELLOW}$1${NC}"; }
+echo_red() { echo -e "${RED}$1${NC}"; }
 
-CONTAINER_NAME="pipe-node-systemd"
-WORK_DIR="$(pwd)/pipe_docker_systemd"
+# -------------------- ROOT CHECK --------------------
+if [[ $EUID -ne 0 ]]; then
+   echo_red "Please run as root (sudo bash pipe_full_auto_setup.sh)"
+   exit 1
+fi
+
+# -------------------- SETUP WORKING DIRECTORY --------------------
+WORK_DIR="$(pwd)/pipe_docker_work"
+CONTAINER_NAME="pipe-debian"
 
 echo_green "📁 Working directory: $WORK_DIR"
 mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
 
+# -------------------- INSTALL DOCKER --------------------
+echo_green ">> Installing Docker..."
 apt update -y >/dev/null 2>&1
 apt install -y docker.io >/dev/null 2>&1
 systemctl enable --now docker >/dev/null 2>&1
+echo_green "✅ Docker installed & running"
 
+# -------------------- REMOVE OLD CONTAINER --------------------
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-  echo_yellow "🗑 Removing old container..."
-  docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+    echo_yellow "🗑️ Removing existing container..."
+    docker rm -f $CONTAINER_NAME >/dev/null 2>&1 || true
 fi
 
-echo_green ">> Creating container with full systemd support..."
+# -------------------- CREATE CONTAINER --------------------
+echo_green ">> Creating Debian container..."
 docker run -dit \
-  --name ${CONTAINER_NAME} \
-  --privileged \
-  --cgroupns=host \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-  -v "$WORK_DIR":/opt/pipe \
-  -w /opt/pipe \
-  ghcr.io/yeasy/docker-systemd:ubuntu24.04
+    --name $CONTAINER_NAME \
+    --restart unless-stopped \
+    -v "$WORK_DIR":/app \
+    -w /app \
+    debian:testing bash
+echo_green "✅ Container ready (mounted to /app)"
 
-echo_green "✅ Container ready with systemd."
-
+# -------------------- INSTALL DEPENDENCIES INSIDE CONTAINER --------------------
 echo_green ">> Installing dependencies inside container..."
-docker exec ${CONTAINER_NAME} bash -c "
+docker exec $CONTAINER_NAME bash -c "
 set -e
-apt update -y && apt install -y curl ufw unzip iputils-ping dnsutils >/dev/null 2>&1
 echo 'nameserver 8.8.8.8' > /etc/resolv.conf
+apt update -y >/dev/null 2>&1
+apt install -y curl unzip ufw screen iputils-ping dnsutils libc6 tmux >/dev/null 2>&1
 "
 
-echo_green ">> Installing Pipe inside container..."
-docker exec -it ${CONTAINER_NAME} bash -c "
+# -------------------- INSTALL PIPE INSIDE DOCKER FOLDER --------------------
+echo_green ">> Installing Pipe Node inside /app (same folder)..."
+docker exec -it $CONTAINER_NAME bash -c "
 set -e
-mkdir -p /opt/pipe/cache
-cd /opt/pipe
+cd /app
+mkdir -p pipe/cache
+cd pipe
+
 if [[ ! -f './pop' ]]; then
-  echo '>>> Downloading POP binary...'
-  curl -L https://pipe.network/p1-cdn/releases/latest/download/pop -o pop
-  chmod +x pop
+    echo '>>> Downloading Pipe POP binary...'
+    curl -L https://pipe.network/p1-cdn/releases/latest/download/pop -o pop
+    chmod +x pop
 fi
 
 if [[ ! -f './.env' ]]; then
-  LOCATION=\$(curl -s ipinfo.io | grep '\"city\"' | cut -d'\"' -f4)
-  COUNTRY=\$(curl -s ipinfo.io | grep '\"country\"' | cut -d'\"' -f4)
-  NODE_LOCATION=\"\${LOCATION}, \${COUNTRY}\"
-  read -p 'Enter Solana Wallet Address: ' WALLET
-  read -p 'Enter Node Name: ' NODE_NAME
-  read -p 'Enter Email: ' NODE_EMAIL
+    echo '>>> Creating .env file...'
+    LOCATION=\$(curl -s ipinfo.io | grep '\"city\"' | cut -d'\"' -f4)
+    COUNTRY=\$(curl -s ipinfo.io | grep '\"country\"' | cut -d'\"' -f4)
+    NODE_LOCATION=\"\${LOCATION}, \${COUNTRY}\"
+    read -p 'Enter Solana Wallet Address: ' WALLET
+    read -p 'Enter Node Name: ' NODE_NAME
+    read -p 'Enter Email: ' NODE_EMAIL
 
-  cat > .env <<EOF
+    cat > .env <<EOF
 NODE_SOLANA_PUBLIC_KEY=\${WALLET}
 NODE_NAME=\${NODE_NAME}
 NODE_EMAIL=\${NODE_EMAIL}
@@ -69,39 +91,28 @@ HTTP_PORT=80
 HTTPS_PORT=443
 UPNP_ENABLED=false
 EOF
-  chmod 600 .env
-  echo '✅ .env created.'
+    chmod 600 .env
+    echo '✅ .env created'
 else
-  echo 'Using existing .env'
+    echo '>>> Using existing .env'
 fi
 
-cat > /etc/systemd/system/pipe.service <<'EOL'
-[Unit]
-Description=Pipe Network POP Node
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-WorkingDirectory=/opt/pipe
-ExecStart=/bin/bash -c 'source /opt/pipe/.env && /opt/pipe/pop'
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-systemctl daemon-reload
-systemctl enable pipe
-systemctl start pipe
-sleep 3
-systemctl status pipe --no-pager
+# -------------------- RUN POP IN TMUX SESSION --------------------
+if tmux has-session -t pipe 2>/dev/null; then
+    echo '⚠️ Tmux session already running, skipping...'
+else
+    echo '🚀 Starting Pipe Node inside tmux session (background)...'
+    tmux new-session -d -s pipe 'cd /app/pipe && source .env && ./pop'
+    echo '✅ Pipe Node is now running in tmux session: pipe'
+fi
 "
 
-echo_green "🎉 Pipe Node running inside systemd-enabled container!"
-echo_yellow "👉 To enter container: sudo docker exec -it ${CONTAINER_NAME} bash"
-echo_yellow "👉 To view node logs: sudo docker exec -it ${CONTAINER_NAME} journalctl -u pipe -f"
-echo_yellow "👉 To restart node: sudo docker exec -it ${CONTAINER_NAME} systemctl restart pipe"
+# -------------------- DONE --------------------
+echo_green "🎉 FULL AUTO SETUP COMPLETE!"
+echo_yellow "→ Folder: $WORK_DIR"
+echo_yellow "→ Container: $CONTAINER_NAME (auto-restarts on boot)"
+echo_yellow "→ Node running inside tmux session named 'pipe'"
+echo_yellow "→ Enter container: sudo docker exec -it $CONTAINER_NAME bash"
+echo_yellow "→ Attach to tmux: sudo docker exec -it $CONTAINER_NAME tmux attach -t pipe"
+echo_yellow "→ Detach from tmux: Ctrl+B then D"
+echo_yellow "→ View logs: sudo docker logs -f $CONTAINER_NAME"
