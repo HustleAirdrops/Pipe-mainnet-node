@@ -5,11 +5,13 @@ set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo_green() { echo -e "${GREEN}$1${NC}"; }
 echo_yellow() { echo -e "${YELLOW}$1${NC}"; }
 echo_red() { echo -e "${RED}$1${NC}"; }
+
+log() { echo -e "${GREEN}[$1]${NC} $2"; }
 
 # -------------------- CHECK ROOT --------------------
 if [[ $EUID -ne 0 ]]; then
@@ -17,17 +19,70 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# -------------------- INSTALL DEPENDENCIES --------------------
+# -------------------- INSTALL UNZIP --------------------
+install_unzip() {
+    if ! command -v unzip &> /dev/null; then
+        log "INFO" "⚠️ 'unzip' not found, installing..."
+        if command -v apt &> /dev/null; then
+            sudo apt update -y && sudo apt install -y unzip
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y unzip
+        elif command -v apk &> /dev/null; then
+            sudo apk add unzip
+        else
+            log "ERROR" "❌ Could not install 'unzip' (unknown package manager)."
+            exit 1
+        fi
+    fi
+}
+
+# -------------------- UNZIP & MOVE .env --------------------
+unzip_files() {
+    ZIP_FILE=$(find "$HOME" -maxdepth 1 -type f -name "*.zip" | head -n 1)
+   
+    if [ -n "$ZIP_FILE" ]; then
+        log "INFO" "📂 Found ZIP file: $ZIP_FILE, unzipping to $HOME ..."
+        install_unzip
+        unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
+
+        # Move .env file if found
+        if [ -f "$HOME/.env" ]; then
+            sudo mkdir -p /opt/pipe
+            sudo mv "$HOME/.env" /opt/pipe/.env
+            sudo chmod 600 /opt/pipe/.env
+            JUST_EXTRACTED_ENV=true
+            log "INFO" "✅ Moved .env to /opt/pipe/.env"
+        fi
+
+        if [ -f "/opt/pipe/.env" ]; then
+            log "INFO" "✅ Successfully extracted and moved .env file"
+        else
+            log "WARN" "⚠️ No .env found in ZIP file"
+        fi
+    else
+        # Even if no ZIP found, check for .env directly
+        if [ -f "$HOME/.env" ]; then
+            sudo mkdir -p /opt/pipe
+            sudo mv "$HOME/.env" /opt/pipe/.env
+            sudo chmod 600 /opt/pipe/.env
+            JUST_EXTRACTED_ENV=true
+            log "INFO" "✅ Found existing .env in HOME, moved to /opt/pipe/.env"
+        else
+            log "WARN" "⚠️ No ZIP or .env file found in $HOME"
+        fi
+    fi
+}
+
+# -------------------- MAIN SETUP --------------------
 echo_green ">> Updating system & installing dependencies..."
 apt update -y >/dev/null 2>&1
-apt install -y curl nano ufw >/dev/null 2>&1
+apt install -y curl ufw >/dev/null 2>&1
 
-# -------------------- SETUP FOLDER --------------------
 echo_green ">> Setting up /opt/pipe directory..."
 mkdir -p /opt/pipe/cache
 cd /opt/pipe
 
-# -------------------- DOWNLOAD POP BINARY --------------------
+# -------------------- DOWNLOAD POP --------------------
 if [[ ! -f "/opt/pipe/pop" ]]; then
     echo_green ">> Downloading latest Pipe POP binary..."
     curl -L https://pipe.network/p1-cdn/releases/latest/download/pop -o /opt/pipe/pop
@@ -36,25 +91,20 @@ else
     echo_yellow ">> POP binary already exists, skipping download."
 fi
 
-# -------------------- USER INPUT --------------------
-echo_green ">> Enter details for your node setup:"
-read -p "Enter your Solana wallet address: " WALLET
-read -p "Enter your Node Name: " NODE_NAME
-read -p "Enter your Email: " NODE_EMAIL
+# -------------------- UNZIP .env OR TAKE INPUT --------------------
+unzip_files
 
-# -------------------- AUTO DETECT LOCATION --------------------
-echo_green ">> Detecting location..."
-LOCATION=$(curl -s ipinfo.io | grep '"city"' | cut -d'"' -f4)
-COUNTRY=$(curl -s ipinfo.io | grep '"country"' | cut -d'"' -f4)
-if [[ -z "$LOCATION" ]]; then
-    LOCATION="Unknown"
-fi
-NODE_LOCATION="$LOCATION, $COUNTRY"
-echo_green ">> Detected location: $NODE_LOCATION"
+if [ ! -f "/opt/pipe/.env" ]; then
+    echo_green ">> No .env found, creating new one..."
+    read -p "Enter your Solana wallet address: " WALLET
+    read -p "Enter your Node Name: " NODE_NAME
+    read -p "Enter your Email: " NODE_EMAIL
 
-# -------------------- CREATE .env FILE --------------------
-echo_green ">> Creating /opt/pipe/.env file..."
-cat > /opt/pipe/.env <<EOF
+    LOCATION=$(curl -s ipinfo.io | grep '"city"' | cut -d'"' -f4)
+    COUNTRY=$(curl -s ipinfo.io | grep '"country"' | cut -d'"' -f4)
+    NODE_LOCATION="${LOCATION}, ${COUNTRY}"
+
+    cat > /opt/pipe/.env <<EOF
 # Wallet for earnings
 NODE_SOLANA_PUBLIC_KEY=${WALLET}
 
@@ -75,17 +125,21 @@ HTTPS_PORT=443
 # Home network auto port forwarding (disable on VPS/servers)
 UPNP_ENABLED=false
 EOF
+    chmod 600 /opt/pipe/.env
+    echo_green "✅ Created new .env at /opt/pipe/.env"
+else
+    echo_green "✅ Existing .env detected, skipping manual input"
+fi
 
-# -------------------- FIREWALL SETUP --------------------
+# -------------------- FIREWALL --------------------
 echo_green ">> Configuring firewall..."
 ufw allow 22 >/dev/null 2>&1
 ufw allow 80/tcp >/dev/null 2>&1
 ufw allow 443/tcp >/dev/null 2>&1
 ufw --force enable >/dev/null 2>&1
-ufw status verbose | grep "Status"
+ufw status | grep "Status"
 
-# -------------------- CREATE SYSTEMD SERVICE --------------------
-echo_green ">> Creating systemd service file..."
+# -------------------- SYSTEMD SERVICE --------------------
 cat > /etc/systemd/system/pipe.service <<'EOF'
 [Unit]
 Description=Pipe Network POP Node
@@ -105,8 +159,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-# -------------------- ENABLE & START SERVICE --------------------
-echo_green ">> Reloading systemd and enabling Pipe service..."
+# -------------------- ENABLE SERVICE --------------------
 systemctl daemon-reload
 systemctl enable pipe
 systemctl restart pipe
@@ -114,7 +167,6 @@ systemctl restart pipe
 sleep 3
 if systemctl is-active --quiet pipe; then
     echo_green "✅ Pipe Node started successfully!"
-    echo_green "You can monitor logs using: sudo journalctl -u pipe -f"
 else
     echo_red "❌ Failed to start Pipe Node. Check logs with: sudo journalctl -u pipe -xe"
 fi
