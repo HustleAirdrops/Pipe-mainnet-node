@@ -12,63 +12,74 @@ echo_red() { echo -e "${RED}$1${NC}"; }
 
 # -------------------- ROOT CHECK --------------------
 if [[ $EUID -ne 0 ]]; then
-   echo_red "Please run as root (sudo bash install_pipe.sh)"
+   echo_red "Please run as root (sudo bash pipe_full_auto_setup.sh)"
    exit 1
 fi
 
+# -------------------- SETUP WORKING DIRECTORY --------------------
+WORK_DIR="$(pwd)/pipe_docker_work"
+CONTAINER_NAME="pipe-debian"
+
+echo_green "📁 Working directory: $WORK_DIR"
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
+
 # -------------------- INSTALL DOCKER --------------------
-echo_green ">> Installing Docker safely..."
+echo_green ">> Installing Docker..."
 apt update -y >/dev/null 2>&1
 apt install -y docker.io >/dev/null 2>&1
 systemctl enable --now docker >/dev/null 2>&1
 echo_green "✅ Docker installed & running"
 
-# -------------------- CREATE PERSISTENT CONTAINER --------------------
-if docker ps -a --format '{{.Names}}' | grep -q '^pipe-node$'; then
-    echo_yellow "⚠️ Container 'pipe-node' already exists, skipping creation."
-else
-    echo_green ">> Creating persistent Debian container (pipe-node)..."
-    docker run -dit \
-        --name pipe-node \
-        -v "$PWD":/app \
-        -w /app \
-        --restart unless-stopped \
-        debian:testing bash
-    echo_green "✅ Container 'pipe-node' created successfully."
+# -------------------- REMOVE OLD CONTAINER --------------------
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo_yellow "🗑️ Removing existing container..."
+    docker rm -f $CONTAINER_NAME >/dev/null 2>&1 || true
 fi
 
-# -------------------- SETUP INSIDE CONTAINER --------------------
-echo_green ">> Preparing inside container..."
-docker exec pipe-node bash -c "
+# -------------------- CREATE CONTAINER --------------------
+echo_green ">> Creating Debian container..."
+docker run -dit \
+    --name $CONTAINER_NAME \
+    --restart unless-stopped \
+    -v "$WORK_DIR":/app \
+    -w /app \
+    debian:testing bash
+echo_green "✅ Container ready (mounted to /app)"
+
+# -------------------- INSTALL DEPENDENCIES INSIDE CONTAINER --------------------
+echo_green ">> Installing dependencies inside container..."
+docker exec $CONTAINER_NAME bash -c "
 set -e
 echo 'nameserver 8.8.8.8' > /etc/resolv.conf
 apt update -y >/dev/null 2>&1
-apt install -y libc6 curl iputils-ping dnsutils unzip ufw >/dev/null 2>&1
+apt install -y curl unzip ufw screen iputils-ping dnsutils libc6 >/dev/null 2>&1
+"
 
+# -------------------- INSTALL PIPE INSIDE DOCKER FOLDER --------------------
+echo_green ">> Installing Pipe Node inside /app (same folder)..."
+docker exec -it $CONTAINER_NAME bash -c "
+set -e
 cd /app
-echo '>>> Setting up /app/pipe directory...'
-mkdir -p /app/pipe/cache
-cd /app/pipe
+mkdir -p pipe/cache
+cd pipe
 
-# -------------------- DOWNLOAD POP --------------------
-if [[ ! -f '/app/pipe/pop' ]]; then
+if [[ ! -f './pop' ]]; then
     echo '>>> Downloading Pipe POP binary...'
     curl -L https://pipe.network/p1-cdn/releases/latest/download/pop -o pop
     chmod +x pop
-else
-    echo '>>> POP binary already exists, skipping download.'
 fi
 
-# -------------------- CREATE .env --------------------
-if [ ! -f '/app/pipe/.env' ]; then
+if [[ ! -f './.env' ]]; then
     echo '>>> Creating .env file...'
-    read -p 'Enter Solana Wallet Address: ' WALLET
-    read -p 'Enter Node Name: ' NODE_NAME
-    read -p 'Enter Email: ' NODE_EMAIL
     LOCATION=\$(curl -s ipinfo.io | grep '\"city\"' | cut -d'\"' -f4)
     COUNTRY=\$(curl -s ipinfo.io | grep '\"country\"' | cut -d'\"' -f4)
     NODE_LOCATION=\"\${LOCATION}, \${COUNTRY}\"
-    cat > /app/pipe/.env <<EOF
+    read -p 'Enter Solana Wallet Address: ' WALLET
+    read -p 'Enter Node Name: ' NODE_NAME
+    read -p 'Enter Email: ' NODE_EMAIL
+
+    cat > .env <<EOF
 NODE_SOLANA_PUBLIC_KEY=\${WALLET}
 NODE_NAME=\${NODE_NAME}
 NODE_EMAIL=\${NODE_EMAIL}
@@ -80,21 +91,21 @@ HTTP_PORT=80
 HTTPS_PORT=443
 UPNP_ENABLED=false
 EOF
-    chmod 600 /app/pipe/.env
-    echo '✅ .env file created.'
+    chmod 600 .env
+    echo '✅ .env created'
 else
-    echo '>>> Existing .env found, skipping creation.'
+    echo '>>> Using existing .env'
 fi
 
-echo '✅ Setup inside container done.'
+echo '✅ Setup done. Starting POP...'
+source .env && ./pop
 "
 
-# -------------------- AUTO-RUN SETUP --------------------
-echo_green ">> Adding auto-run for pipe-node container..."
-docker update --restart unless-stopped pipe-node >/dev/null 2>&1
-echo_green "✅ Auto restart on reboot enabled."
-
-echo_green ">> All setup complete!"
-echo_yellow "To enter container anytime: sudo docker exec -it pipe-node bash"
-echo_yellow "To start node manually: cd /app/pipe && source .env && ./pop"
-echo_green "✅ You can now run this inside a screen session for 24/7 uptime!"
+# -------------------- DONE --------------------
+echo_green "🎉 FULL AUTO SETUP COMPLETE!"
+echo_yellow "   → Folder: $WORK_DIR"
+echo_yellow "   → Container: $CONTAINER_NAME (auto-starts on boot)"
+echo_yellow "   → Logs: docker logs -f $CONTAINER_NAME"
+echo_yellow "   → Enter: docker exec -it $CONTAINER_NAME bash"
+echo_yellow "   → Stop: docker stop $CONTAINER_NAME"
+echo_yellow "   → Start: docker start -ai $CONTAINER_NAME"
