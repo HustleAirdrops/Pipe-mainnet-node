@@ -75,18 +75,33 @@ install_dependencies() {
 install_glibc() {
     if [ ! -d "/opt/glibc-2.39/lib" ]; then
         echo_yellow "⚙️ GLIBC 2.39 not found, installing..."
-        cd /tmp
+        
+        # Work safely inside /tmp/glibc39build (isolated folder)
+        mkdir -p /tmp/glibc39build
+        cd /tmp/glibc39build
+        
+        # Clean only inside this folder, not entire /tmp
+        rm -rf glibc-2.39 glibc-build glibc-2.39.tar.gz >/dev/null 2>&1
+
+        # Download and extract source
         wget -q http://ftp.gnu.org/gnu/libc/glibc-2.39.tar.gz
         tar -xzf glibc-2.39.tar.gz
+
+        # Prepare build folder
         mkdir glibc-build && cd glibc-build
-        ../glibc-2.39/configure --prefix=/opt/glibc-2.39 >/dev/null
+
+        # Configure and compile
+        ../glibc-2.39/configure --prefix=/opt/glibc-2.39 >/dev/null 2>&1
         make -j$(nproc) >/dev/null 2>&1
         make install >/dev/null 2>&1
+
         echo_green "✅ GLIBC 2.39 installed at /opt/glibc-2.39"
     else
-        echo_green "✅ GLIBC 2.39 already installed."
+        echo_green "✅ GLIBC 2.39 already installed — skipping build."
     fi
 }
+
+
 
 # -------------------- INSTALL OPENSSL 3 --------------------
 install_openssl3() {
