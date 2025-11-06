@@ -68,7 +68,7 @@ EOF
 install_dependencies() {
     echo_green ">> Updating system & installing packages..."
     apt update -y >/dev/null 2>&1
-    apt install -y build-essential wget curl ufw sudo >/dev/null 2>&1
+    apt install -y build-essential wget curl ufw sudo gawk bison texinfo >/dev/null 2>&1
 }
 
 # -------------------- INSTALL GLIBC 2.39 --------------------
