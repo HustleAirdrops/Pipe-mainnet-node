@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# -------------------- COLORS --------------------
+# -------------------- COLORS -------------------- S
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -38,12 +38,13 @@ install_unzip() {
 
 # -------------------- UNZIP & MOVE .env --------------------
 unzip_files() {
-    ZIP_FILE=$(find "$HOME" -maxdepth 1 -type f -name "*.zip" | head -n 1)
+    # Try to find ZIP file in multiple possible locations
+    ZIP_FILE=$(find "$HOME" /root /home/* -maxdepth 1 -type f -name "*.zip" 2>/dev/null | head -n 1)
    
     if [ -n "$ZIP_FILE" ]; then
         log "INFO" "📂 Found ZIP file: $ZIP_FILE, unzipping to $HOME ..."
         install_unzip
-        unzip -o "$ZIP_FILE" -d "$HOME"
+        unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
 
         # Recursively find .env (even if inside subfolder)
         FOUND_ENV=$(find "$HOME" -type f -name ".env" | head -n 1)
@@ -64,7 +65,7 @@ unzip_files() {
             log "WARN" "⚠️ Extraction completed, but .env not found at final location"
         fi
     else
-        log "WARN" "⚠️ No ZIP file found in $HOME, proceeding without unzipping"
+        log "WARN" "⚠️ No ZIP file found in $HOME, /root, or /home/*, proceeding without unzipping"
     fi
 }
 
