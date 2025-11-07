@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# -------------------- COLORS -------------------- Ssssss
+# -------------------- COLORS -------------------- 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -38,6 +38,9 @@ install_unzip() {
 
 # -------------------- UNZIP & MOVE .env --------------------
 unzip_files() {
+    # Always use the real user's home if running under sudo
+    [ "$SUDO_USER" ] && export HOME=$(eval echo "~$SUDO_USER")
+
     # Try to find ZIP file in multiple possible locations
     ZIP_FILE=$(find "$HOME" /root /home/* -maxdepth 1 -type f -name "*.zip" 2>/dev/null | head -n 1)
    
