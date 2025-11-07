@@ -43,7 +43,7 @@ unzip_files() {
     if [ -n "$ZIP_FILE" ]; then
         log "INFO" "📂 Found ZIP file: $ZIP_FILE, unzipping to $HOME ..."
         install_unzip
-        unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
+        unzip -o "$ZIP_FILE" -d "$HOME"
 
         # Recursively find .env (even if inside subfolder)
         FOUND_ENV=$(find "$HOME" -type f -name ".env" | head -n 1)
