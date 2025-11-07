@@ -58,7 +58,6 @@ unzip_files() {
             log "WARN" "⚠️ No .env file found inside ZIP"
         fi
 
-        ls -l "$HOME"
         if [ -f "/opt/pipe/.env" ]; then
             log "INFO" "✅ Successfully extracted and moved .env file"
         else
@@ -68,6 +67,7 @@ unzip_files() {
         log "WARN" "⚠️ No ZIP file found in $HOME, proceeding without unzipping"
     fi
 }
+
 
 # -------------------- MAIN SETUP --------------------
 echo_green ">> Updating system & installing dependencies..."
