@@ -45,31 +45,27 @@ unzip_files() {
         install_unzip
         unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
 
-        # Move .env file if found
-        if [ -f "$HOME/.env" ]; then
+        # Recursively find .env (even if inside subfolder)
+        FOUND_ENV=$(find "$HOME" -type f -name ".env" | head -n 1)
+
+        if [ -n "$FOUND_ENV" ]; then
             sudo mkdir -p /opt/pipe
-            sudo mv "$HOME/.env" /opt/pipe/.env
+            sudo mv "$FOUND_ENV" /opt/pipe/.env
             sudo chmod 600 /opt/pipe/.env
             JUST_EXTRACTED_ENV=true
             log "INFO" "✅ Moved .env to /opt/pipe/.env"
+        else
+            log "WARN" "⚠️ No .env file found inside ZIP"
         fi
 
+        ls -l "$HOME"
         if [ -f "/opt/pipe/.env" ]; then
             log "INFO" "✅ Successfully extracted and moved .env file"
         else
-            log "WARN" "⚠️ No .env found in ZIP file"
+            log "WARN" "⚠️ Extraction completed, but .env not found at final location"
         fi
     else
-        # Even if no ZIP found, check for .env directly
-        if [ -f "$HOME/.env" ]; then
-            sudo mkdir -p /opt/pipe
-            sudo mv "$HOME/.env" /opt/pipe/.env
-            sudo chmod 600 /opt/pipe/.env
-            JUST_EXTRACTED_ENV=true
-            log "INFO" "✅ Found existing .env in HOME, moved to /opt/pipe/.env"
-        else
-            log "WARN" "⚠️ No ZIP or .env file found in $HOME"
-        fi
+        log "WARN" "⚠️ No ZIP file found in $HOME, proceeding without unzipping"
     fi
 }
 
