@@ -136,6 +136,7 @@ echo_green ">> Configuring firewall..."
 ufw allow 22 >/dev/null 2>&1
 ufw allow 80/tcp >/dev/null 2>&1
 ufw allow 443/tcp >/dev/null 2>&1
+ufw allow 8081/tcp >/dev/null 2>&1
 ufw --force enable >/dev/null 2>&1
 ufw status | grep "Status"
 
